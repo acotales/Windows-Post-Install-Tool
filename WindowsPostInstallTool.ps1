@@ -17,7 +17,6 @@
 using assembly System.Windows.Forms
 using namespace System.Windows.Forms
 using namespace System.Security.Principal
-using namespace System.IO
 
 
 
@@ -51,38 +50,32 @@ function Test-InternetConnection {
     return $false
 }
 
-# -- SCRIPT VARIABLES --
-$CurrentPrincipal = [WindowsPrincipal][WindowsIdentity]::GetCurrent()
-$AdminRole = [WindowsBuiltInRole]::Administrator
-$MutexName = "Global\" + [Path]::GetFileNameWithoutExtension($PSCommandPath)
-
-$script:Mutex = New-Object System.Threading.Mutex($false, $MutexName)
 
 # -- CLEANER SELF-ELEVATION --
+$CurrentPrincipal = [WindowsPrincipal][WindowsIdentity]::GetCurrent()
+$AdminRole = [WindowsBuiltInRole]::Administrator
+
 if (-not $CurrentPrincipal.IsInRole($AdminRole)) {
-    $ElevationArgs = @{
-        FilePath     = "powershell.exe"
-        Verb         = "RunAs"
-        ArgumentList = "-NoProfile -ExecutionPolicy Bypass -NoExit -File `"$PSCommandPath`""
-    }
-    Start-Process @ElevationArgs
+    try {
+        $ElevationArgs = "-NoProfile -ExecutionPolicy Bypass -NoExit -File `"$PSCommandPath`""
+        Start-Process powershell.exe -ArgumentList $ElevationArgs -Verb RunAs
+    } catch { }   # Operation canceled by the user, error silently
     exit
 }
 
 # -- ENSURE SINGLE INSTANCE --
+# Structure: [Scope]\[ScriptName]_[[Guid]::NewGuid().ToString().ToUpper()]
+$MutexName = "Local\WindowsPostInstallTool_F78C27D8-BD4E-45C3-B33C-7EEB36A8B649"
+$script:Mutex = New-Object System.Threading.Mutex($false, $MutexName)
+
 try {
-    if (-not $script:Mutex.WaitOne(0, $false)) { Exit-Console }
-}
-catch [System.Threading.AbandonedMutexException] {
-    # Previous process crashed; re-running the script
-    $ElevationArgs = @{
-        FilePath     = "powershell.exe"
-        Verb         = "RunAs"
-        ArgumentList = "-NoProfile -ExecutionPolicy Bypass -NoExit -File `"$PSCommandPath`""
+    if (-not $script:Mutex.WaitOne(0, $false)) {
+        # Another instance is already running; exiting.
+        Exit-Console
     }
-    Start-Process @ElevationArgs
-    Exit-Console
 }
+# Previous process crashed; do nothing
+catch [System.Threading.AbandonedMutexException] { }
 
 Register-EngineEvent PowerShell.Exiting -Action {
     try {
@@ -111,3 +104,11 @@ do {
     $hasInternetConnection = Test-InternetConnection
 
 } until ($hasInternetConnection)
+
+# -- CHANGE CONSOLE COLOR (CMD STYLE) --
+$Host.UI.RawUI.WindowTitle = "Windows Post Install Tool"
+$Host.UI.RawUI.WindowSize.Width = 90
+$Host.UI.RawUI.WindowSize.Height = 30
+$Host.UI.RawUI.BackgroundColor = "Black"
+$Host.UI.RawUI.ForegroundColor = "Gray"
+Clear-Host
